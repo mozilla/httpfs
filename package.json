@@ -10,8 +10,9 @@
   "author": "Tilman Kamp <5991088+tilmankamp@users.noreply.github.com>",
   "license": "MIT",
   "dependencies": {
+    "buffer-serializer": "^1.1.0",
     "commander": "^2.16.0",
     "fuse-bindings": "^2.11.2",
-    "request": "^2.87.0"
+    "unirest": "^0.5.1"
   }
 }
