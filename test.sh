@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 mkdir mnt
 httpfs http://localhost:3000 mnt &
-sleep 1
+while [ ! -d mnt/a ]; do sleep 0.1; done;
 ls -la mnt
-sleep 1
+cat mnt/a/b.txt
+cat mnt/c.txt
 kill $(jobs -p)
-sleep 1
+while [ -d mnt/a ]; do sleep 0.1; done;
 rm -r mnt

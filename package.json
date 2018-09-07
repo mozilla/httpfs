@@ -10,6 +10,7 @@
   "author": "Tilman Kamp <5991088+tilmankamp@users.noreply.github.com>",
   "license": "MIT",
   "dependencies": {
+    "agentkeepalive": "^3.5.1",
     "buffer-serializer": "^1.1.0",
     "commander": "^2.16.0",
     "fuse-bindings": "^2.11.2",
