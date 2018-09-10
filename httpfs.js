@@ -3,7 +3,6 @@ const fs = require('fs')
 const program = require('commander')
 const fuse = require('fuse-bindings')
 const Agent = require('agentkeepalive')
-const childProc = require('child_process')
 const BufferSerializer = require('buffer-serializer')
 
 const operations = 'getattr readdir truncate chown chmod read write create utimens unlink rename mkdir rmdir'.split(' ')
@@ -15,19 +14,27 @@ var certificate
 var request
 var agent
 var createOptions
+var timeout = 60 * 60
+var callcounter = 0
+var calls = []
+var running = true
 
 program
     .version('0.0.1')
-    .option('-c, --cert <certificate>')
+    .option('-t, --timeout <seconds>')
+    .option('-cr, --certraw <certificate>')
     .option('-cf, --certfile <certificate-filename>')
     .arguments('<url> <mountpath>')
     .action((url, mountpath, options) => {
         serviceUrl = new URL(url)
         mountPath = mountpath
-        if (options.cert) {
-            certificate = options.cert
+        if (options.certraw) {
+            certificate = options.certraw
         } else if (options.certfile) {
             certificate = fs.readFileSync(options.certfile)
+        }
+        if (options.timeout) {
+            timeout = options.timeout
         }
     })
     .parse(process.argv)
@@ -38,7 +45,7 @@ if (!serviceUrl) {
 
 if (serviceUrl.protocol === 'https:') {
     request = require('https').request
-    agent = new Agent.AgentHttps()
+    agent = new Agent.HttpsAgent()
     createOptions = () => ({
         agent: agent,
         ca: [certificate]
@@ -51,25 +58,34 @@ if (serviceUrl.protocol === 'https:') {
     })
 }
 
-function _perform(operation, args, retries) {
-    let cb = args[args.length - 1]
-    switch (operation) {
+function removeCall(call) {
+    let index = calls.indexOf(call)
+    if (index >= 0) {
+        calls.splice(index, 1)
+    }
+}
+
+function sendRequest(call, retries) {
+    let args = call.args
+    let rargs
+    switch (call.operation) {
         case 'read':        rargs = [args[0], args[1], args[3], args[4]]; break
         case 'write':       rargs = [args[0], args[1], args[2].slice(0, args[3]), args[4]]; break
-        default:            rargs = args.slice(0, -1)
+        default:            rargs = args
     }
-    let buffer = serializer.toBuffer({ operation: operation, args: rargs })
+    let buffer = serializer.toBuffer({ operation: call.operation, args: rargs })
     let options = createOptions()
     options.headers = {
         'Content-Type': 'application/octet-stream',
         'Content-Length': buffer.length
     }
-    let req = request(serviceUrl, options, res => {
+    options.method = 'POST'
+    call.request = request(serviceUrl, options, res => {
         let chunks = []
         res.on('data', chunk => chunks.push(chunk))
         res.on('end', () => {
             result = serializer.fromBuffer(Buffer.concat(chunks))
-            switch (operation) {
+            switch (call.operation) {
                 case 'read':
                     if (result[0] >= 0) {
                         result[1].copy(args[2])
@@ -77,27 +93,33 @@ function _perform(operation, args, retries) {
                     }
                     break
             }
-            cb.apply(null, result)
+            removeCall(call)
+            call.callback.apply(null, result)
         })
     })
-    req.on('error', err => {
-        cb(-70)
-        /*
-        if (retries > 0) {
-            retries--
-            setTimeout(() => _perform(operation, args, retries), 100)
-        } else {
-            console.error(err)
-            process.exit(1)
+    call.request.on('error', err => {
+        if (call.callback) {
+            if (retries > 0) {
+                delete call.request
+                call.timer = setTimeout(() => sendRequest(call, retries - 1), 1000)
+            } else {
+                removeCall(call)
+                call.callback(typeof err.errno === 'number' ? err.errno : -70)
+            }
         }
-        */
     })
-    req.write(buffer)
-    req.end()
+    call.request.end(buffer)
 }
 
 function perform(operation, args) {
-    _perform(operation, args, 50)
+    let callback = args.pop()
+    if (running) {
+        let call = { id: callcounter++, operation: operation, args: args, callback: callback }
+        calls.push(call)
+        sendRequest(call, timeout)
+    } else {
+        callback(-70)
+    }
 }
 
 fuse.mount(mountPath, new Proxy({}, {
@@ -111,6 +133,19 @@ fuse.mount(mountPath, new Proxy({}, {
 
 var unmountCounter = 10
 function unmount () {
+    if (running) {
+        running = false
+        for (let call of calls) {
+            call.callback(-70)
+            delete call.callback
+            if (call.request) {
+                call.request.abort()
+            }
+            if (call.timer) {
+                clearTimeout(call.timer)
+            }
+        }
+    }
     fuse.unmount(mountPath, function (err) {
         if (err) {
             unmountCounter--
