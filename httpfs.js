@@ -10,6 +10,7 @@ const operations = 'getattr readdir truncate chown chmod read write create utime
 var serializer = new BufferSerializer()
 var serviceUrl
 var mountPath
+var quiet
 var certificate
 var request
 var agent
@@ -21,6 +22,7 @@ var running = true
 
 program
     .version('0.0.1')
+    .option('-q, --quiet')
     .option('-t, --timeout <seconds>')
     .option('-cr, --certraw <certificate>')
     .option('-cf, --certfile <certificate-filename>')
@@ -36,6 +38,7 @@ program
         if (options.timeout) {
             timeout = options.timeout
         }
+        quiet = !!options.quiet
     })
     .parse(process.argv)
 
@@ -56,6 +59,12 @@ if (serviceUrl.protocol === 'https:') {
     createOptions = () => ({
         agent: agent
     })
+}
+
+function log(message) {
+    if (!quiet) {
+        console.log(message)
+    }
 }
 
 function removeCall(call) {
@@ -128,7 +137,7 @@ fuse.mount(mountPath, new Proxy({}, {
     get: (target, key) => (...args) => perform(key, args)
 }), function (err) {
     if (err) throw err
-    console.log('filesystem mounted on ' + mountPath)
+    log('filesystem mounted on ' + mountPath)
 })
 
 var unmountCounter = 10
@@ -152,10 +161,10 @@ function unmount () {
             if (unmountCounter > 0) {
                 setTimeout(unmount, 100)
             } else {
-                console.log('filesystem at ' + mountPath + ' not unmounted')
+                console.error('filesystem at ' + mountPath + ' not unmounted')
             }
         } else {
-            console.log('filesystem at ' + mountPath + ' unmounted')
+            log('filesystem at ' + mountPath + ' unmounted')
         }
     })
 }
