@@ -5,7 +5,7 @@ const fuse = require('fuse-bindings')
 const Agent = require('agentkeepalive')
 const BufferSerializer = require('buffer-serializer')
 
-const operations = 'getattr readdir truncate chown chmod read write create utimens unlink rename mkdir rmdir'.split(' ')
+const operations = 'getattr readdir readlink truncate chown chmod read write create utimens unlink rename link symlink mkdir rmdir'.split(' ')
 
 var serializer = new BufferSerializer()
 var serviceUrl
@@ -80,6 +80,8 @@ function sendRequest(call, retries) {
     switch (call.operation) {
         case 'read':        rargs = [args[0], args[1], args[3], args[4]]; break
         case 'write':       rargs = [args[0], args[1], args[2].slice(0, args[3]), args[4]]; break
+        case 'link':        rargs = [args[1], args[0]]; break
+        case 'symlink':     rargs = [args[1], args[0]]; break
         default:            rargs = args
     }
     let buffer = serializer.toBuffer({ operation: call.operation, args: rargs })
