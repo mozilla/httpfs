@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 const fs = require('fs')
+const url = require('url')
 const program = require('commander')
 const fuse = require('fuse-bindings')
 const Agent = require('agentkeepalive')
@@ -12,9 +13,8 @@ var serviceUrl
 var mountPath
 var quiet
 var certificate
-var request
+var http
 var agent
-var createOptions
 var timeout = 60 * 60
 var callcounter = 0
 var calls = []
@@ -27,8 +27,8 @@ program
     .option('-cr, --certraw <certificate>')
     .option('-cf, --certfile <certificate-filename>')
     .arguments('<url> <mountpath>')
-    .action((url, mountpath, options) => {
-        serviceUrl = new URL(url)
+    .action((surl, mountpath, options) => {
+        serviceUrl = url.parse(surl)
         mountPath = mountpath
         if (options.certraw) {
             certificate = options.certraw
@@ -46,19 +46,12 @@ if (!serviceUrl) {
     program.help()
 }
 
-if (serviceUrl.protocol === 'https:') {
-    request = require('https').request
+if (serviceUrl.protocol == 'https:') {
+    http = require('https')
     agent = new Agent.HttpsAgent()
-    createOptions = () => ({
-        agent: agent,
-        ca: [certificate]
-    })
 } else {
-    request = require('http').request
+    http = require('http')
     agent = new Agent()
-    createOptions = () => ({
-        agent: agent
-    })
 }
 
 function log(message) {
@@ -85,13 +78,22 @@ function sendRequest(call, retries) {
         default:            rargs = args
     }
     let buffer = serializer.toBuffer({ operation: call.operation, args: rargs })
-    let options = createOptions()
-    options.headers = {
-        'Content-Type': 'application/octet-stream',
-        'Content-Length': buffer.length
+    options = {
+        method: 'POST',
+        protocol: serviceUrl.protocol,
+        hostname: serviceUrl.hostname,
+        path: serviceUrl.path,
+        port: serviceUrl.port || (serviceUrl.protocol == 'https:' ? 443 : 80),
+        agent: agent,
+        headers: {
+            'Content-Type': 'application/octet-stream',
+            'Content-Length': buffer.length
+        }
     }
-    options.method = 'POST'
-    call.request = request(serviceUrl, options, res => {
+    if (serviceUrl.protocol == 'https:') {
+        options.ca = [certificate]
+    }
+    call.request = http.request(options, res => {
         let chunks = []
         res.on('data', chunk => chunks.push(chunk))
         res.on('end', () => {
