@@ -19,17 +19,19 @@ var agent
 var timeout
 var calls = []
 var running = true
-var attrcache = true
+var attrcache
+var readcache
+var writecache
 var blocksize = 0
 var nocache
-var cache = {}
-var cacheTop = []
 
 program
     .version('0.0.1')
     .option('-q, --quiet')
     .option('-t, --timeout <seconds>')
     .option('--attrcache')
+    .option('--readcache')
+    .option('--writecache')
     .option('--blocksize <bytes>')
     .option('--nocache <regex>')
     .option('--certraw <certificate>')
@@ -46,10 +48,18 @@ program
         if (options.nocache) {
             nocache = new RegExp(options.nocache)
         }
-        blocksize = options.blocksize ? filesizeParser(options.blocksize) : 0
+        if (options.attrcache) {
+            attrcache = []
+        }
+        if (options.readcache) {
+            readcache = []
+        }
+        if (options.writecache) {
+            writecache = []
+        }
+        blocksize = options.blocksize ? filesizeParser(options.blocksize) : 1024 * 1024
         timeout = options.timeout || 60 * 60
         quiet = !!options.quiet
-        attrcache = !!options.attrcache
     })
     .parse(process.argv)
 
@@ -78,106 +88,9 @@ function removeCall(call) {
     }
 }
 
-function finishCall(call, ...args) {
-    removeCall(call)
-    call.callback(...args)
-}
-
-function flushFile(filepath, cb) {
-    let cached = cache[filepath]
-    if (cached && cached.block && cached.block.length > 0) {
-        let b = Buffer.concat(cached.block)
-        perform('write', filepath, 0, b, b.length, cached.position, cb)
-        cached.block = []
-        cached.position += b.length
-    }
-}
-
 function sendRequest(call, retries) {
-    let args = call.args
-    let rargs = args
-    switch (call.operation) {
-        case 'getattr':     
-            if (attrcache && cached && cached.stat) {
-                return finishCall(0, cached.stat)
-            }
-            break
-        case 'read':  
-            [filepath, fd, buffer, length, position] = args   
-            if (blocksize > 0 && !buffer.isBuffer && (!nocache || !nocache.test(filepath))) {
-                let cached = cache[filepath]
-                if (cached && 
-                    !cached.out &&
-                    cached.block && 
-                    cached.position <= position && 
-                    cached.position + cached.block.length >= position + length) {
-                    let sourceStart = position - cached.position
-                    cached.block.copy(buffer, 0, sourceStart, sourceStart + length)
-                    finishCall(call, 0, length)
-                } else if (cached && cached.out && cached.block) {
-                    flushFile(filepath, () => sendRequest(call, retries))
-                } else if (cached && !cached.out && !cached.block) {
-                    call.timer = setTimeout(() => sendRequest(call, retries - 1), 1000)
-                } else {
-                    cached = cache[filepath] = cached || {}
-                    cached.position = position
-                    cached.out = false
-                    cached.block = null
-                    let index = cacheTop.indexOf(cached)
-                    if (index >= 0) {
-                        cacheTop.splice(index)
-                    }
-                    cacheTop.push(cached)
-                    if (cacheTop.length > 10) {
-                        let oldest = cacheTop.shift()
-                        if (oldest.out && oldest.block) {
-                            flushFile(filepath, () => {})
-                        }
-                    }
-                    perform('read', filepath, 0, cached, Math.max(length, blocksize), position, l => {
-                        if (l < 0) {
-                            finishCall(call, l)
-                        } else if (l < length) {
-                            let actualLength = Math.min(l, length)
-                            cached.block.copy(buffer, 0, 0, actualLength)
-                            finishCall(call, actualLength)
-                        } else {
-                            sendRequest(call, retries)
-                        }
-                    })
-                }
-                return
-            }
-            rargs = [filepath, fd, length, position]
-            break
-        case 'write':
-            [filepath, fd, buffer, length, position] = args  
-            buffer = buffer.length == length ? buffer : buffer.slice(0, length) 
-            if (blocksize > 0 && (!nocache || !nocache.test(filepath))) {
-                cached = cache[filepath] = cached || {}
-                if (cached.out) {
-                    let blockLength = cached.block.reduce((l, b) => l + b, 0)
-                    let cursor = cached.position + blockLength
-                    if (position == cursor || cursor == 0) {
-                        cached.block.push(buffer)
-                        cached.position = position
-                    } else {
-                        flushFile(filepath, () => sendRequest(call, retries))
-                    }
-                } else {
-                    cached.out = true
-                    cached.block = [buffer]
-                    cached.position = position
-                }
-                return
-            }
-            rargs = [filepath, fd, buffer, position]
-            break
-        case 'link':        rargs = [args[1], args[0]]; break
-        case 'symlink':     rargs = [args[1], args[0]]; break  
-    }
-    let buffer = serializer.toBuffer({ operation: call.operation, args: rargs })
-    options = {
+    let buffer = serializer.toBuffer({ operation: call.operation, args: call.args })
+    let options = {
         method: 'POST',
         protocol: serviceUrl.protocol,
         hostname: serviceUrl.hostname,
@@ -196,19 +109,7 @@ function sendRequest(call, retries) {
         let chunks = []
         res.on('data', chunk => chunks.push(chunk))
         res.on('end', () => {
-            result = serializer.fromBuffer(Buffer.concat(chunks))
-            switch (call.operation) {
-                case 'read':
-                    if (result[0] >= 0) {
-                        if (args[2].isBuffer) {
-                            result[1].copy(args[2])
-                        } else {
-                            args[2].block = result[1]
-                        }
-                        result = [result[1].length]
-                    }
-                    break
-            }
+            let result = serializer.fromBuffer(Buffer.concat(chunks))
             removeCall(call)
             call.callback.apply(null, result)
         })
@@ -227,11 +128,9 @@ function sendRequest(call, retries) {
     call.request.end(buffer)
 }
 
-function perform(operation, ...args) {
-    if (operation == 'options') {
-        return ['nonempty']
-    } else if (running) {
-        let call = { operation: operation, args: args, callback: args.pop() }
+function performP(operation, callback, p, ...args) {
+    if (running) {
+        let call = { operation: operation, callback: callback, args: [p, ...args] }
         calls.push(call)
         sendRequest(call, timeout)
     } else {
@@ -239,11 +138,64 @@ function perform(operation, ...args) {
     }
 }
 
-fuse.mount(mountPath, new Proxy({}, {
-    ownKeys: (target, key) => operations,
-    getOwnPropertyDescriptor: (target, key) => operations.includes(key) ? { value: (...args) => perform(key, ...args), enumerable: true, configurable: true } : undefined,
-    get: (target, key) => (...args) => perform(key, ...args)
-}), function (err) {
+function performI(operation, callback, p, ...args) {
+    setAttrCache(p)
+    performP(operation, callback, p, ...args)
+}
+
+function getAttrCache(p) {
+    return attrcache && attrcache[p]
+}
+
+function setAttrCache(p, stat) {
+    if (attrcache) {
+        if (stat) {
+            attrcache[p] = stat
+        } else if (attrcache[p]) {
+            delete attrcache[p]
+        }
+    }
+}
+
+fuse.mount(mountPath, {
+    getattr:  (p, cb)               => {
+        let cached = getAttrCache(p)
+        if (cached) {
+            cb(0, cached)
+        } else {
+            performP('getattr',  (code, stat) => { 
+                setAttrCache(p, stat)
+                cb(code, stat)
+            }, p)
+        }
+    },
+    readdir:  (p, cb)                    => performP('readdir',  cb, p),
+    truncate: (p, size, cb)              => performI('truncate', cb, p, size),
+    readlink: (p, cb)                    => performP('readlink', cb, p),
+    chown:    (p, uid, gid, cb)          => performI('chown',    cb, p, uid, gid),
+    chmod:    (p, mode, cb)              => performI('chmod',    cb, p, mode),
+    read:     (p, fd, buf, len, off, cb) => {
+        performP('read', (code, resultBuffer) => {
+            if (code >= 0 && resultBuffer) {
+                resultBuffer.copy(buf)
+                cb(resultBuffer.length)
+            } else {
+                cb(code < 0 ? code : -70)
+            }
+        }, p, off, len)
+    },
+    write:    (p, fd, buf, len, off, cb) => {
+        performI('write', cb, p, buf.length == len ? buf : buf.slice(0, len), off)
+    },
+    create:   (p, mode, cb)              => performI('create',   cb, p, mode),
+    utimens:  (p, atime, mtime, cb)      => performI('utimens',  cb, p, atime, mtime),
+    unlink:   (p, cb)                    => performI('unlink',   cb, p),
+    rename:   (p, dest, cb)              => performI('rename',   cb, p, dest),
+    link:     (dest, p, cb)              => performP('link',     cb, p, dest),
+    symlink:  (dest, p, cb)              => performP('symlink',  cb, p, dest),
+    mkdir:    (p, mode, cb)              => performP('mkdir',    cb, p, mode),
+    rmdir:    (p, cb)                    => performI('rmdir',    cb, p)
+}, err => {
     if (err) throw err
     log('filesystem mounted on ' + mountPath)
 })
