@@ -193,7 +193,7 @@ function readFromCache(fd, off, len, buf, cb) {
         performP('read', (code, resultBuffer) => {
             if (code >= 0 && resultBuffer) {
                 rc.off = off
-                rc.block = resultBuffer
+                rc.block = Buffer.from(resultBuffer)
                 let elen = Math.min(len, rc.block.length)
                 rc.block.copy(buf, 0, 0, elen)
                 cb(elen)
