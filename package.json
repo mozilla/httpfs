@@ -2,7 +2,7 @@
   "name": "httpfs",
   "version": "0.0.1",
   "description": "FUSE filesystem who's operations are POSTed to a web-server",
-  "main": "httpfs.js",
+  "main": "lib.js",
   "bin": {
     "httpfs": "./httpfs.js"
   },
