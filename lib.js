@@ -226,7 +226,7 @@ exports.mount = function(endpoint, mountpoint, options, callback) {
     }
 
     var unmountCounter = 10
-    function unmount () {
+    function unmount (cb) {
         if (running) {
             running = false
             for (let call of calls) {
@@ -240,16 +240,20 @@ exports.mount = function(endpoint, mountpoint, options, callback) {
                 }
             }
         }
-        fuse.unmount(mountpoint, function (err) {
+        fuse.unmount(mountpoint, err => {
             if (err) {
                 unmountCounter--
                 if (unmountCounter > 0) {
                     setTimeout(unmount, 100)
                 } else {
                     console.error('filesystem at ' + mountpoint + ' not unmounted')
+                    console.error('Please make sure that all apps, windows and shells have their current work dir outside the mountpoint.')
+                    console.error('Then kill this process and use either "fusermount -u ' + mountpoint + '" or "sudo umount --lazy ' + mountpoint + '".')
+                    cb && cb(err)
                 }
             } else {
                 log('filesystem at ' + mountpoint + ' unmounted')
+                cb && cb()
             }
         })
     }
@@ -315,7 +319,7 @@ exports.mount = function(endpoint, mountpoint, options, callback) {
         rmdir:    (p, cb)               => performI('rmdir',    cb, p)
     }, err => {
         if (err) {
-            console.error('problem mounting', endpoint, 'to', mountpoint, ':', err)
+            console.error('problem mounting', endpoint.href, 'to', mountpoint)
             callback(err)
         } else {
             log('mounted', endpoint.href, 'to', mountpoint)

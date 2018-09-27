@@ -28,8 +28,8 @@ program
             if (err) {
                 if (err) throw err
             }
-            process.on('SIGINT', mount.unmount)
-            process.on('SIGTERM', mount.unmount)
+            process.on('SIGINT', () => mount.unmount())
+            process.on('SIGTERM', () => mount.unmount())
         })
     })
     .parse(process.argv)
