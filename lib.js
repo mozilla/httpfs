@@ -72,26 +72,35 @@ exports.mount = function(endpoint, mountpoint, options, callback) {
         if (endpoint.protocol == 'https:' && options.certificate) {
             httpOptions.ca = [options.certificate]
         }
+        let handleError = (errno) => {
+            if (retries > 0) {
+                delete call.request
+                call.timer = setTimeout(() => sendRequest(call, retries - 1), 1000)
+            } else {
+                removeCall(call)
+                if (call.callback) {
+                    call.callback(errno)
+                }
+            }
+        }
         call.request = http.request(httpOptions, res => {
             let chunks = []
             res.on('data', chunk => chunks.push(chunk))
             res.on('end', () => {
-                let result = serializer.fromBuffer(Buffer.concat(chunks))
+                let result
+                try {
+                    result = serializer.fromBuffer(Buffer.concat(chunks))
+                } catch (ex) {
+                    return handleError(-70)
+                }
+                if (res.statusCode != 200) {
+                    return handleError(-70)
+                }
                 removeCall(call)
                 call.callback.apply(null, result)
             })
         })
-        call.request.on('error', err => {
-            if (call.callback) {
-                if (retries > 0) {
-                    delete call.request
-                    call.timer = setTimeout(() => sendRequest(call, retries - 1), 1000)
-                } else {
-                    removeCall(call)
-                    call.callback(typeof err.errno === 'number' ? err.errno : -70)
-                }
-            }
-        })
+        call.request.on('error', err => handleError((err && typeof err.errno === 'number') ? err.errno : -70))
         call.request.end(buffer)
     }
     
