@@ -89,7 +89,7 @@ exports.mount = function(endpoint, mountpoint, options, callback) {
             if (retries > 0) {
                 delete call.request
                 call.timer = setTimeout(() => {
-                    logDebug('sending (' + retries + 'left)', call.operation)
+                    logDebug('sending (' + retries + ' tries left)', call.operation)
                     sendRequest(call, retries - 1)
                 }, 1000)
             } else {
@@ -103,15 +103,15 @@ exports.mount = function(endpoint, mountpoint, options, callback) {
             let chunks = []
             res.on('data', chunk => chunks.push(chunk))
             res.on('end', () => {
+                if (res.statusCode != 200) {
+                    logDebug('Status code ' + res.statusCode)
+                    return handleError(-70)
+                }
                 let result
                 try {
                     result = serializer.fromBuffer(Buffer.concat(chunks))
                 } catch (ex) {
                     logDebug('Problem parsing response buffer')
-                    return handleError(-70)
-                }
-                if (res.statusCode != 200) {
-                    logDebug('Status code ' + res.statusCode)
                     return handleError(-70)
                 }
                 removeCall(call)
