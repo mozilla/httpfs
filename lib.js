@@ -42,6 +42,7 @@ exports.mount = function(endpoint, mountpoint, options, callback) {
         if (!options.quiet) {
             console.log(...messages)
         }
+        logDebug(...messages)
     }
 
     function logDebug(...messages) {
@@ -50,7 +51,7 @@ exports.mount = function(endpoint, mountpoint, options, callback) {
             if (options.debuglog === '-') {
                 console.log(line)
             } else {
-                fs.appendFileSync(options.debuglog, line)
+                fs.appendFileSync(options.debuglog, line + '\n')
             }
         }
     }
@@ -87,7 +88,10 @@ exports.mount = function(endpoint, mountpoint, options, callback) {
         let handleError = (errno) => {
             if (retries > 0) {
                 delete call.request
-                call.timer = setTimeout(() => sendRequest(call, retries - 1), 1000)
+                call.timer = setTimeout(() => {
+                    logDebug('sending (' + retries + 'left)', call.operation)
+                    sendRequest(call, retries - 1)
+                }, 1000)
             } else {
                 removeCall(call)
                 if (call.callback) {
@@ -103,16 +107,21 @@ exports.mount = function(endpoint, mountpoint, options, callback) {
                 try {
                     result = serializer.fromBuffer(Buffer.concat(chunks))
                 } catch (ex) {
+                    logDebug('Problem parsing response buffer')
                     return handleError(-70)
                 }
                 if (res.statusCode != 200) {
+                    logDebug('Status code ' + res.statusCode)
                     return handleError(-70)
                 }
                 removeCall(call)
                 call.callback.apply(null, result)
             })
         })
-        call.request.on('error', err => handleError((err && typeof err.errno === 'number') ? err.errno : -70))
+        call.request.on('error', err => {
+            logDebug('HTTP error', err)
+            handleError(err && typeof err.errno === 'number' ? err.errno : -70)
+        })
         call.request.end(buffer)
     }
     
