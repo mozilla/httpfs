@@ -1,3 +1,4 @@
+const fs = require('fs')
 const url = require('url')
 const fuse = require('fuse-bindings')
 const Agent = require('agentkeepalive')
