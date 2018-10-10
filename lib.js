@@ -42,6 +42,17 @@ exports.mount = function(endpoint, mountpoint, options, callback) {
             console.log(...messages)
         }
     }
+
+    function logDebug(...messages) {
+        if (options.debuglog) {
+            let line = JSON.stringify(messages)
+            if (options.debuglog === '-') {
+                console.log(line)
+            } else {
+                fs.appendFileSync(options.debuglog, line)
+            }
+        }
+    }
     
     function removeCall(call) {
         let index = calls.indexOf(call)
@@ -108,6 +119,7 @@ exports.mount = function(endpoint, mountpoint, options, callback) {
         if (running) {
             let call = { operation: operation, callback: callback, args: [p, ...args] }
             calls.push(call)
+            logDebug('sending', operation, p)
             sendRequest(call, timeout)
         } else {
             callback(-70)
@@ -117,6 +129,16 @@ exports.mount = function(endpoint, mountpoint, options, callback) {
     function performI(operation, callback, p, ...args) {
         setAttrCache(p)
         performP(operation, callback, p, ...args)
+    }
+
+    function logAndPerformP(operation, callback, p, ...args) {
+        logDebug(operation, p)
+        performP(operation, callback, p, ...args)
+    }
+    
+    function logAndPerformI(operation, callback, p, ...args) {
+        logDebug(operation, p)
+        performI(operation, callback, p, ...args)
     }
     
     function getAttrCache(p) {
@@ -269,6 +291,7 @@ exports.mount = function(endpoint, mountpoint, options, callback) {
     
     fuse.mount(mountpoint, {
         getattr: (p, cb) => {
+            logDebug('getattr', p)
             let cached = getAttrCache(p)
             if (cached) {
                 cb(cached.code, cached.stat)
@@ -280,13 +303,16 @@ exports.mount = function(endpoint, mountpoint, options, callback) {
             }
         },
         open: (p, flags, cb) => {
+            logDebug('open', p)
             let fd = createDescriptor(p)
             cb(0, fd)
         },
         create: (p, mode, cb) => {
+            logDebug('create', p)
             performI('create', code => code < 0 ? cb(code) : cb(0, createDescriptor(p)), p, mode)
         },
         read: (p, fd, buf, len, off, cb) => {
+            logDebug('read', p)
             if (isCached(fd)) {
                 readFromCache(fd, off, len, buf, cb)
             } else {
@@ -301,6 +327,7 @@ exports.mount = function(endpoint, mountpoint, options, callback) {
             }
         },
         write: (p, fd, buf, len, off, cb) => {
+            logDebug('write', p)
             let abuf = buf.length == len ? buf : buf.slice(0, len)
             if (isCached(fd)) {
                 writeToCache(fd, off, abuf, cb)
@@ -309,23 +336,25 @@ exports.mount = function(endpoint, mountpoint, options, callback) {
             }
         },
         flush: (p, fd, cb) => {
+            logDebug('flush', p)
             isCached(fd) ? flushCacheDescriptor(fd, cb) : cb(0)
         },
         release: (p, fd, cb) => {
+            logDebug('release', p)
             isCached(fd) ? releaseCache(fd, cb) : cb(0)
         },
-        readdir:  (p, cb)               => performP('readdir',  cb, p),
-        truncate: (p, size, cb)         => performI('truncate', cb, p, size),
-        readlink: (p, cb)               => performP('readlink', cb, p),
-        chown:    (p, uid, gid, cb)     => performI('chown',    cb, p, uid, gid),
-        chmod:    (p, mode, cb)         => performI('chmod',    cb, p, mode),
-        utimens:  (p, atime, mtime, cb) => performI('utimens',  cb, p, atime, mtime),
-        unlink:   (p, cb)               => performI('unlink',   cb, p),
-        rename:   (p, dest, cb)         => performI('rename',   cb, p, dest),
-        link:     (dest, p, cb)         => performP('link',     cb, p, dest),
-        symlink:  (dest, p, cb)         => performP('symlink',  cb, p, dest),
-        mkdir:    (p, mode, cb)         => performP('mkdir',    cb, p, mode),
-        rmdir:    (p, cb)               => performI('rmdir',    cb, p)
+        readdir:  (p, cb)               => logAndPerformP('readdir',  cb, p),
+        truncate: (p, size, cb)         => logAndPerformI('truncate', cb, p, size),
+        readlink: (p, cb)               => logAndPerformP('readlink', cb, p),
+        chown:    (p, uid, gid, cb)     => logAndPerformI('chown',    cb, p, uid, gid),
+        chmod:    (p, mode, cb)         => logAndPerformI('chmod',    cb, p, mode),
+        utimens:  (p, atime, mtime, cb) => logAndPerformI('utimens',  cb, p, atime, mtime),
+        unlink:   (p, cb)               => logAndPerformI('unlink',   cb, p),
+        rename:   (p, dest, cb)         => logAndPerformI('rename',   cb, p, dest),
+        link:     (dest, p, cb)         => logAndPerformP('link',     cb, p, dest),
+        symlink:  (dest, p, cb)         => logAndPerformP('symlink',  cb, p, dest),
+        mkdir:    (p, mode, cb)         => logAndPerformP('mkdir',    cb, p, mode),
+        rmdir:    (p, cb)               => logAndPerformI('rmdir',    cb, p)
     }, err => {
         if (err) {
             console.error('problem mounting', endpoint.href, 'to', mountpoint)

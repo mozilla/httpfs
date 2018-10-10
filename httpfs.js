@@ -14,6 +14,7 @@ program
     .option('--nocache <regex>')
     .option('--certraw <certificate>')
     .option('--certfile <certificate-filename>')
+    .option('--debuglog <debug-log-filename>')
     .arguments('<endpoint> <mountpoint>')
     .action((endpoint, mountpoint, options) => {
         if (options.certraw) {
