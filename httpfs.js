@@ -11,7 +11,7 @@ program
     .option('--attrcache')
     .option('--cache')
     .option('--blocksize <bytes>')
-    .option('--nocache <regex>')
+    .option('--nocache <pattern>')
     .option('--certraw <certificate>')
     .option('--certfile <certificate-filename>')
     .option('--debuglog <debug-log-filename>')
@@ -24,6 +24,9 @@ program
         }
         if (options.blocksize) {
             options.blocksize = filesizeParser(options.blocksize)
+        }
+        if (options.nocache) {
+            options.nocache = options.nocache.split(',')
         }
         httpfs.mount(endpoint, mountpoint, options, (err, mount) => {
             if (err) {

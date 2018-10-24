@@ -1,5 +1,6 @@
 const fs = require('fs')
 const url = require('url')
+const matcher = require('matcher')
 const fuse = require('fuse-bindings')
 const Agent = require('agentkeepalive')
 const BufferSerializer = require('buffer-serializer')
@@ -12,11 +13,6 @@ exports.mount = function(endpoint, mountpoint, options, callback) {
     let running = true
     let blocksize = options.blocksize || 1024 * 1024
     let timeout = options.timeout || 60 * 60
-
-    let nocache
-    if (options.nocache) {
-        nocache = new RegExp(options.nocache)
-    }
 
     let attrcache
     if (options.attrcache) {
@@ -166,7 +162,19 @@ exports.mount = function(endpoint, mountpoint, options, callback) {
     }
     
     function shouldCache(p) {
-        return cache && !(nocache && nocache.test(p))
+        if (cache) {
+            if (options.nocache) {
+                for (let pattern of options.nocache) {
+                    if (matcher.isMatch(p, pattern)) {
+                        logDebug('no caching', options.nocache, p)
+                        return false
+                    }
+                }
+            }
+            return true
+        } else {
+            return false
+        }
     }
     
     function createDescriptor(p) {
@@ -367,7 +375,7 @@ exports.mount = function(endpoint, mountpoint, options, callback) {
         rmdir:    (p, cb)               => logAndPerformI('rmdir',    cb, p)
     }, err => {
         if (err) {
-            console.error('problem mounting', endpoint.href, 'to', mountpoint)
+            console.error('problem mounting', endpoint.href, 'to', mountpoint, err)
             callback(err)
         } else {
             log('mounted', endpoint.href, 'to', mountpoint)
